@@ -1,18 +1,43 @@
+import time
 from random import randrange
 from typing import Optional
 
+import psycopg
 from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.params import Body
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 app = FastAPI()
 
 
+# try:
+#     conn = psycopg.connect(
+#         dbname="postgres", user="postgres", password="azim", host="172.17.0.3"
+#     )
+#     print("db connected")
+# except Exception as error:
+#     print("connection failed to db")
+#     print("Error", error)
+
+# Connection string with credentials and database name
+
+conn_string = "postgresql://postgres:azim@172.17.0.3:5432/postgres"
+while True:
+    try:
+        # Connect to the database
+        conn = psycopg.connect(conn_string)
+        print("Connected to PostgreSQL database")
+        break
+    except Exception as error:
+        print("Connection failed to db")
+        print("Error", error)
+        time.sleep(2)
+
+
 class Post(BaseModel):
-    id: Optional[int]
     title: str
     content: str
-    rating: Optional[int] = None
     published: bool = True
 
 
@@ -75,12 +100,20 @@ def findpostindex(id, posts):
 
 @app.get("/")
 def root():
-    return {"message": "this is home page"}
+    return RedirectResponse(url="/docs", status_code=303)
 
 
 @app.get("/posts")
-def get_all_post():
-    return {"message": "data get successfully", "payload": allposts}
+async def get_all_posts():
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM blogs")
+        # Fetch all results as a list of tuples
+        posts = cur.fetchall()
+        field_names = [desc[0] for desc in cur.description]
+
+    formatted_posts = [dict(zip(field_names, post)) for post in posts]
+    # Return a JSON response with the retrieved posts
+    return {"message": "Data retrieved successfully", "payload": formatted_posts}
 
 
 @app.get("/posts/latest/")
@@ -110,11 +143,15 @@ def get_all_post(postid: int):
 
 
 @app.post("/posts", status_code=status.HTTP_201_CREATED)
-def create_post(post: Post):
-    new_post = post.model_dump()
-    new_post["id"] = randrange(1, 1000000000000)
+async def create_post(post: Post):
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO blogs (title,content,published) VALUES(%s,%s,%s) RETURNING *",
+            (post.title, post.content, post.published),
+        )
+        new_post = cur.fetchone()
+        conn.commit()
 
-    allposts.append(new_post)
     return {"message": "post create successfully", "payload": new_post}
 
 
