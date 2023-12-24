@@ -43,59 +43,7 @@ class Post(BaseModel):
 
 class Updatepost(BaseModel):
     content: str
-    rating: Optional[int] = None
     published: bool = True
-
-
-allposts = [
-    {
-        "id": 1,
-        "title": "Lorem Ipsum Dolor Sit Amet",
-        "content": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed ac justo eget sapien faucibus commodo.",
-        "rating": 4.5,
-        "published": True,
-    },
-    {
-        "id": 2,
-        "title": "Nulla Facilisi",
-        "content": "Nulla facilisi. Curabitur ac arcu nec urna tristique tincidunt. Suspendisse potenti.",
-        "rating": 3.8,
-        "published": True,
-    },
-    {
-        "id": 3,
-        "title": "Vestibulum Ante Ipsum Primis",
-        "content": "Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Proin euismod nisi nec justo vestibulum.",
-        "rating": 4.2,
-        "published": True,
-    },
-    {
-        "id": 4,
-        "title": "Aenean Consectetur Elit",
-        "content": "Aenean consectetur elit et ligula vulputate, a aliquam lacus varius. Vivamus vel turpis vitae leo imperdiet luctus.",
-        "rating": 4.8,
-        "published": True,
-    },
-    {
-        "id": 5,
-        "title": "Fusce Euismod Mollis Elit",
-        "content": "Fusce euismod mollis elit, nec consectetur metus vestibulum sit amet. Integer sed lectus in justo hendrerit aliquet.",
-        "rating": 3.5,
-        "published": True,
-    },
-]
-
-
-def findpost(id, posts):
-    for post in posts:
-        if post["id"] == id:
-            return post
-
-
-def findpostindex(id, posts):
-    for index, post in enumerate(posts):
-        if post["id"] == id:
-            return index
 
 
 @app.get("/")
@@ -117,29 +65,37 @@ async def get_all_posts():
 
 
 @app.get("/posts/latest/")
-def get_all_post():
-    post = allposts[len(allposts) - 1]
-    return {"message": "data get successfully", "payload": post}
+async def get_latest_post():
+    with conn.cursor() as cur:
+        # Retrieve the latest post from the database
+        cur.execute("SELECT * FROM blogs ORDER BY id DESC LIMIT 1")
+        latest_post = cur.fetchone()
 
-
-# @app.get("/posts/{postid}/")
-# def get_all_post(postid: int, response: Response):
-#     post = findpost(postid, allposts)
-#     if not post:
-#         response.status_code = status.HTTP_404_NOT_FOUND
-#         return {"message": f"post not found for this {postid} id"}
-#     return {"message": "data get successfully", "payload": post}
+        if latest_post:
+            # If the latest post exists, return it
+            field_names = [desc[0] for desc in cur.description]
+            formatted_post = dict(zip(field_names, latest_post))
+            return {"message": "Data retrieved successfully", "payload": formatted_post}
+        else:
+            # If no posts are found, raise a 404 Not Found exception
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No posts found in the database",
+            )
 
 
 @app.get("/posts/{postid}/")
 def get_all_post(postid: int):
-    post = findpost(postid, allposts)
-    if not post:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"post not found for this {postid} id",
-        )
-    return {"message": "data get successfully", "payload": post}
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM blogs WHERE id = %s", (str(postid),))
+        post = cur.fetchone()
+        field_names = [desc[0] for desc in cur.description]
+
+    if post:
+        formatted_post = dict(zip(field_names, post))
+        return {"message": "Data retrieved successfully", "payload": formatted_post}
+    else:
+        raise HTTPException(status_code=404, detail="Post not found")
 
 
 @app.post("/posts", status_code=status.HTTP_201_CREATED)
@@ -150,33 +106,60 @@ async def create_post(post: Post):
             (post.title, post.content, post.published),
         )
         new_post = cur.fetchone()
+        column_names = [desc[0] for desc in cur.description]
+
+        # Create a dictionary with column names as keys
+        post_dict = dict(zip(column_names, new_post))
         conn.commit()
 
-    return {"message": "post create successfully", "payload": new_post}
+    return {"message": "post create successfully", "payload": post_dict}
 
 
 @app.delete("/posts/{postid}/", status_code=status.HTTP_204_NO_CONTENT)
-def deletePost(postid: int):
-    postindex = findpostindex(postid, allposts)
-    if not postindex:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"post not found for this {postid} id",
-        )
-    allposts.pop(postindex)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+async def delete_post(postid: int):
+    with conn.cursor() as cur:
+        # Check if the post exists before deleting
+        cur.execute("SELECT * FROM blogs WHERE id = %s", (str(postid),))
+        existing_post = cur.fetchone()
+
+        if existing_post:
+            # If the post exists, delete it
+            cur.execute("DELETE FROM blogs WHERE id = %s", (str(postid),))
+            conn.commit()
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        else:
+            # If the post doesn't exist, raise a 404 Not Found exception
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Post not found for this {postid} id",
+            )
 
 
 @app.put("/posts/{postid}/", status_code=status.HTTP_201_CREATED)
 def updatePost(postid: int, update_post: Updatepost):
-    postindex = findpostindex(postid, allposts)
-    if not postindex:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"post not found for this {postid} id",
-        )
-    post_dict = update_post.model_dump()
-    post_dict["id"] = postid
-    allposts[postindex] = post_dict
+    with conn.cursor() as cur:
+        # Check if the post exists before deleting
+        cur.execute("SELECT * FROM blogs WHERE id = %s", (str(postid),))
+        existing_post = cur.fetchone()
 
-    return {"message": "post create successfully", "payload": post_dict}
+        if existing_post:
+            cur.execute(
+                "UPDATE blogs SET content=%s, published=%s  WHERE id = %s RETURNING *",
+                (
+                    update_post.content,
+                    update_post.published,
+                    str(postid),
+                ),
+            )
+            new_post = cur.fetchone()
+            column_names = [desc[0] for desc in cur.description]
+            # Create a dictionary with column names as keys
+            post_dict = dict(zip(column_names, new_post))
+            conn.commit()
+            return {"message": "post create successfully", "payload": post_dict}
+        else:
+            # If the post doesn't exist, raise a 404 Not Found exception
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Post not found for this {postid} id",
+            )
